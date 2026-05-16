@@ -12,7 +12,7 @@ using VSeeFace;
 
 public sealed class VSFReactionTool : EditorWindow
 {
-    private const string GeneratedFolderPath = "Assets/VSF Generated";
+    private const string GeneratedFolderRootPath = "Assets/VSF Generated";
     private const float MinimumClipSeconds = 1f / 60f;
     private const string ToolTitle = "VSF Reaction Tool";
 
@@ -34,6 +34,7 @@ public sealed class VSFReactionTool : EditorWindow
         public TriggerJoinMode joinMode = TriggerJoinMode.Any;
         public float enterThreshold = 0.6f;
         public AnimationClip reactionSourceClip;
+        public string outputAssetName;
     }
 
     [MenuItem("Tools/VRM/VSF에서 반응형 애니메이션 설정하는 툴")]
@@ -46,7 +47,7 @@ public sealed class VSFReactionTool : EditorWindow
     }
 
     // 입력값을 검사한 뒤 프리팹 또는 씬 오브젝트에 설정을 적용합니다.
-    private static void ApplyReaction(GameObject selected, SimpleReactionConfig config)
+    private static void ApplyReaction(GameObject selected, SimpleReactionConfig config, string generatedFolderOverride = null, bool overwriteExistingSetupAssets = false)
     {
         if (EditorApplication.isPlayingOrWillChangePlaymode)
         {
@@ -66,6 +67,7 @@ public sealed class VSFReactionTool : EditorWindow
 
         config.firstTriggerName = (config.firstTriggerName ?? string.Empty).Trim();
         config.secondTriggerName = (config.secondTriggerName ?? string.Empty).Trim();
+        config.outputAssetName = GetOutputBaseName(config);
         config.enterThreshold = Mathf.Clamp01(config.enterThreshold);
 
         if (string.IsNullOrEmpty(config.firstTriggerName))
@@ -94,15 +96,15 @@ public sealed class VSFReactionTool : EditorWindow
             && !string.IsNullOrEmpty(prefabPath)
             && prefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
         {
-            ApplyToPrefabAsset(prefabPath, config);
+            ApplyToPrefabAsset(prefabPath, config, generatedFolderOverride ?? GetGeneratedFolderForPrefabAsset(prefabPath), overwriteExistingSetupAssets);
             return;
         }
 
-        ApplyToSceneOrPrefabObject(selected, config);
+        ApplyToSceneOrPrefabObject(selected, config, generatedFolderOverride ?? GetGeneratedFolderForObject(selected), overwriteExistingSetupAssets);
     }
 
     // 프리팹 에셋을 직접 열어서 반응형 애니메이션 설정을 저장합니다.
-    private static void ApplyToPrefabAsset(string prefabPath, SimpleReactionConfig config)
+    private static void ApplyToPrefabAsset(string prefabPath, SimpleReactionConfig config, string generatedFolder, bool overwriteExistingSetupAssets)
     {
         if (!File.Exists(prefabPath))
         {
@@ -114,7 +116,7 @@ public sealed class VSFReactionTool : EditorWindow
         var root = PrefabUtility.LoadPrefabContents(prefabPath);
         try
         {
-            ApplySetup(root, config, GeneratedFolderPath);
+            ApplySetup(root, config, generatedFolder, overwriteExistingSetupAssets);
             PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
             succeeded = true;
         }
@@ -132,18 +134,18 @@ public sealed class VSFReactionTool : EditorWindow
         AssetDatabase.Refresh();
         if (succeeded)
         {
-            EditorUtility.DisplayDialog(ToolTitle, $"적용 완료:\n{prefabPath}", "OK");
+            EditorUtility.DisplayDialog(ToolTitle, $"적용 완료:\n{prefabPath}\n\n생성 폴더:\n{generatedFolder}", "OK");
         }
     }
 
     // 씬에 있는 오브젝트나 프리팹 인스턴스에 설정을 적용합니다.
-    private static void ApplyToSceneOrPrefabObject(GameObject selected, SimpleReactionConfig config)
+    private static void ApplyToSceneOrPrefabObject(GameObject selected, SimpleReactionConfig config, string generatedFolder, bool overwriteExistingSetupAssets)
     {
         try
         {
-            ApplySetup(selected, config, GeneratedFolderPath);
+            ApplySetup(selected, config, generatedFolder, overwriteExistingSetupAssets);
             RecordObjectChanges(selected);
-            EditorUtility.DisplayDialog(ToolTitle, $"적용 완료:\n{selected.name}", "OK");
+            EditorUtility.DisplayDialog(ToolTitle, $"적용 완료:\n{selected.name}\n\n생성 폴더:\n{generatedFolder}", "OK");
         }
         catch (Exception ex)
         {
@@ -156,7 +158,7 @@ public sealed class VSFReactionTool : EditorWindow
     }
 
     // 아바타에 필요한 컴포넌트, 클립, 컨트롤러를 연결하는 핵심 적용 로직입니다.
-    private static void ApplySetup(GameObject root, SimpleReactionConfig config, string generatedFolder)
+    private static void ApplySetup(GameObject root, SimpleReactionConfig config, string generatedFolder, bool overwriteExistingSetupAssets)
     {
         if (root == null)
         {
@@ -196,10 +198,30 @@ public sealed class VSFReactionTool : EditorWindow
 
         var driverRoot = GetOrCreateChild(root.transform, "VSF Reaction Drivers");
         var firstDriver = EnsureFloatDriver(driverRoot, "Trigger 1 Driver", bodyAnimator, "Trigger1");
-        var firstDriverClipPath = $"{generatedFolder}/VSF_ReactionTrigger1.anim";
-        var secondDriverClipPath = $"{generatedFolder}/VSF_ReactionTrigger2.anim";
-        var reactionClipPath = $"{generatedFolder}/VSF_Reaction.anim";
-        var controllerPath = $"{generatedFolder}/VSF_Reaction.controller";
+        var outputBaseName = GetOutputBaseName(config);
+        var assetPaths = ResolveOutputAssetPaths(vsfAnimations, bodyAnimator, config, generatedFolder, outputBaseName, overwriteExistingSetupAssets);
+        var firstDriverClipPath = assetPaths.firstDriverClipPath;
+        var secondDriverClipPath = assetPaths.secondDriverClipPath;
+        var reactionClipPath = assetPaths.reactionClipPath;
+        var controllerPath = assetPaths.controllerPath;
+
+        if (overwriteExistingSetupAssets)
+        {
+            firstDriverClipPath = PrepareOverwriteAssetPath(firstDriverClipPath, $"{outputBaseName}_Trigger1.anim");
+            if (config.useSecondTrigger)
+            {
+                secondDriverClipPath = PrepareOverwriteAssetPath(secondDriverClipPath, $"{outputBaseName}_Trigger2.anim");
+            }
+
+            reactionClipPath = PrepareOverwriteAssetPath(reactionClipPath, $"{outputBaseName}.anim");
+            controllerPath = PrepareOverwriteAssetPath(controllerPath, $"{outputBaseName}.controller");
+        }
+
+        bodyAnimator.runtimeAnimatorController = null;
+        DeleteGeneratedAssetIfExists(firstDriverClipPath);
+        DeleteGeneratedAssetIfExists(secondDriverClipPath);
+        DeleteGeneratedAssetIfExists(reactionClipPath);
+        DeleteGeneratedAssetIfExists(controllerPath);
 
         var firstDriverClip = CreateOrUpdateDriverClip(firstDriverClipPath, GetRelativePath(root.transform, firstDriver.transform));
 
@@ -263,7 +285,19 @@ public sealed class VSFReactionTool : EditorWindow
     {
         var blendShapeOptions = GetBlendShapeOptions();
         var hasBlendShapeOptions = blendShapeOptions.Length > 0;
-        var canApply = targetObject != null && hasBlendShapeOptions && config.reactionSourceClip != null;
+        if (config.reactionSourceClip != null && string.IsNullOrWhiteSpace(config.outputAssetName))
+        {
+            config.outputAssetName = SanitizeAssetBaseName(config.reactionSourceClip.name);
+        }
+
+        var outputBaseName = GetOutputBaseName(config);
+        var defaultGeneratedFolder = GetGeneratedFolderForObject(targetObject);
+        var hasExistingGeneratedAssets = HasGeneratedAssets(defaultGeneratedFolder, outputBaseName);
+        var hasExistingDriverSetup = HasExistingDriverSetup(targetObject);
+        var shouldOfferOverwrite = hasExistingGeneratedAssets || hasExistingDriverSetup;
+        var overwritePreview = shouldOfferOverwrite
+            ? GetOverwritePreviewMessage(targetObject, config, defaultGeneratedFolder, outputBaseName)
+            : null;
         var previousLabelWidth = EditorGUIUtility.labelWidth;
         var previousWideMode = EditorGUIUtility.wideMode;
         var bodyStyle = new GUIStyle(EditorStyles.wordWrappedLabel)
@@ -300,12 +334,30 @@ public sealed class VSFReactionTool : EditorWindow
             config.firstTriggerName = DrawBlendShapePopup("기준 블렌드쉐입", config.firstTriggerName, blendShapeOptions);
         }
 
-        config.useSecondTrigger = EditorGUILayout.ToggleLeft("추가 블렌드쉐입도 같이 보기", config.useSecondTrigger);
+        var secondTriggerOptions = blendShapeOptions
+            .Where(option => !string.Equals(option, config.firstTriggerName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var canUseSecondTrigger = secondTriggerOptions.Length > 0;
 
-        using (new EditorGUI.DisabledScope(!config.useSecondTrigger || !hasBlendShapeOptions))
+        if (!canUseSecondTrigger)
         {
-            config.secondTriggerName = DrawBlendShapePopup("추가 블렌드쉐입", config.secondTriggerName, blendShapeOptions);
+            config.useSecondTrigger = false;
+        }
+
+        using (new EditorGUI.DisabledScope(!canUseSecondTrigger))
+        {
+            config.useSecondTrigger = EditorGUILayout.ToggleLeft("추가 블렌드쉐입도 같이 보기", config.useSecondTrigger);
+        }
+
+        using (new EditorGUI.DisabledScope(!config.useSecondTrigger || !canUseSecondTrigger))
+        {
+            config.secondTriggerName = DrawBlendShapePopup("추가 블렌드쉐입", config.secondTriggerName, secondTriggerOptions);
             config.joinMode = (TriggerJoinMode)EditorGUILayout.EnumPopup("발동 방식", config.joinMode);
+        }
+
+        if (!canUseSecondTrigger && hasBlendShapeOptions)
+        {
+            EditorGUILayout.HelpBox("추가 블렌드쉐입으로 고를 다른 이름이 없어서 단일 트리거 모드로 동작합니다.", MessageType.None);
         }
 
         if (config.useSecondTrigger)
@@ -314,27 +366,70 @@ public sealed class VSFReactionTool : EditorWindow
         }
         DrawSectionEnd();
 
+        var hasDuplicateTriggers = config.useSecondTrigger
+            && string.Equals(config.firstTriggerName, config.secondTriggerName, StringComparison.OrdinalIgnoreCase);
+        var canApply = targetObject != null
+            && hasBlendShapeOptions
+            && config.reactionSourceClip != null
+            && !hasDuplicateTriggers;
+
         GUILayout.Space(6f);
         DrawSectionStart("동작 설정");
         EditorGUILayout.LabelField("값이 들어오기 시작하는 기준과 재생할 애니메이션 설정", bodyStyle);
         GUILayout.Space(4f);
         config.enterThreshold = EditorGUILayout.FloatField("시작으로 보는 값", config.enterThreshold);
         config.reactionSourceClip = (AnimationClip)EditorGUILayout.ObjectField("재생할 애니메이션", config.reactionSourceClip, typeof(AnimationClip), false);
+        config.outputAssetName = EditorGUILayout.TextField("저장 이름", config.outputAssetName ?? string.Empty);
 
         if (config.reactionSourceClip == null)
         {
             EditorGUILayout.HelpBox("재생할 애니메이션은 직접 넣어주세요.", MessageType.Warning);
         }
 
+        if (!string.IsNullOrWhiteSpace(outputBaseName))
+        {
+            EditorGUILayout.HelpBox($"저장 파일 이름 접두사: {outputBaseName}", MessageType.None);
+        }
+
         EditorGUILayout.HelpBox($"현재 설정\n값이 {config.enterThreshold:0.##} 이상이면 바로 실행합니다.", MessageType.None);
         DrawSectionEnd();
 
         GUILayout.Space(8f);
+        if (canApply)
+        {
+            EditorGUILayout.HelpBox(
+                shouldOfferOverwrite
+                    ? $"기존 드라이버 또는 생성물이 있어요.\n기본 폴더: {defaultGeneratedFolder}\n저장 이름: {outputBaseName}\n\n{overwritePreview}"
+                    : $"새 저장 대상입니다.\n기본 폴더: {defaultGeneratedFolder}\n저장 이름: {outputBaseName}",
+                MessageType.None);
+        }
+        else if (hasDuplicateTriggers)
+        {
+            EditorGUILayout.HelpBox("기준 블렌드쉐입과 추가 블렌드쉐입은 서로 다른 이름이어야 합니다.", MessageType.Warning);
+        }
+
         using (new EditorGUI.DisabledScope(!canApply))
         {
-            if (GUILayout.Button("적용", GUILayout.Height(36f)))
+            if (shouldOfferOverwrite)
             {
-                Apply();
+                EditorGUILayout.BeginHorizontal();
+                if (GUILayout.Button("덮어쓰기", GUILayout.Height(36f)))
+                {
+                    Apply(defaultGeneratedFolder, true);
+                }
+
+                if (GUILayout.Button("새로 저장", GUILayout.Height(36f)))
+                {
+                    Apply(defaultGeneratedFolder, false, GetNextGeneratedAssetBaseName(defaultGeneratedFolder, outputBaseName));
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+            else
+            {
+                if (GUILayout.Button("저장", GUILayout.Height(36f)))
+                {
+                    Apply(defaultGeneratedFolder, false);
+                }
             }
         }
 
@@ -393,16 +488,26 @@ public sealed class VSFReactionTool : EditorWindow
     }
 
     // 창에서 입력한 설정값으로 실제 적용 함수를 호출합니다.
-    private void Apply()
+    private void Apply(string generatedFolderOverride, bool overwriteExistingSetupAssets, string outputAssetNameOverride = null)
     {
+        var previousOutputAssetName = config.outputAssetName;
         try
         {
-            ApplyReaction(targetObject, config);
+            if (!string.IsNullOrWhiteSpace(outputAssetNameOverride))
+            {
+                config.outputAssetName = outputAssetNameOverride;
+            }
+
+            ApplyReaction(targetObject, config, generatedFolderOverride, overwriteExistingSetupAssets);
         }
         catch (Exception ex)
         {
             Debug.LogException(ex);
             EditorUtility.DisplayDialog(ToolTitle, ex.Message, "OK");
+        }
+        finally
+        {
+            config.outputAssetName = previousOutputAssetName;
         }
     }
 
@@ -434,24 +539,34 @@ public sealed class VSFReactionTool : EditorWindow
     // 사용자가 고른 원본 애니메이션을 현재 아바타 구조에 맞게 복사합니다.
     private static AnimationClip CreateOrUpdateReactionClip(string assetPath, AnimationClip sourceClip, string bodyPath)
     {
+        var sourceCurveBindings = AnimationUtility.GetCurveBindings(sourceClip);
+        var sourceCurves = sourceCurveBindings
+            .Select(binding => new KeyValuePair<EditorCurveBinding, AnimationCurve>(binding, AnimationUtility.GetEditorCurve(sourceClip, binding)))
+            .ToArray();
+        var sourceObjectBindings = AnimationUtility.GetObjectReferenceCurveBindings(sourceClip);
+        var sourceObjectCurves = sourceObjectBindings
+            .Select(binding => new KeyValuePair<EditorCurveBinding, ObjectReferenceKeyframe[]>(binding, AnimationUtility.GetObjectReferenceCurve(sourceClip, binding)))
+            .ToArray();
+        var sourceEvents = AnimationUtility.GetAnimationEvents(sourceClip);
+
         var clip = LoadOrCreateClip(assetPath);
         ClearClipCurves(clip);
 
-        foreach (var binding in AnimationUtility.GetCurveBindings(sourceClip))
+        foreach (var pair in sourceCurves)
         {
-            var rebound = binding;
-            rebound.path = RebasePath(binding.path, bodyPath);
-            AnimationUtility.SetEditorCurve(clip, rebound, AnimationUtility.GetEditorCurve(sourceClip, binding));
+            var rebound = pair.Key;
+            rebound.path = RebasePath(pair.Key.path, bodyPath);
+            AnimationUtility.SetEditorCurve(clip, rebound, pair.Value);
         }
 
-        foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(sourceClip))
+        foreach (var pair in sourceObjectCurves)
         {
-            var rebound = binding;
-            rebound.path = RebasePath(binding.path, bodyPath);
-            AnimationUtility.SetObjectReferenceCurve(clip, rebound, AnimationUtility.GetObjectReferenceCurve(sourceClip, binding));
+            var rebound = pair.Key;
+            rebound.path = RebasePath(pair.Key.path, bodyPath);
+            AnimationUtility.SetObjectReferenceCurve(clip, rebound, pair.Value);
         }
 
-        AnimationUtility.SetAnimationEvents(clip, AnimationUtility.GetAnimationEvents(sourceClip));
+        AnimationUtility.SetAnimationEvents(clip, sourceEvents);
         SetClipLoop(clip, false);
         EditorUtility.SetDirty(clip);
         return clip;
@@ -599,6 +714,284 @@ public sealed class VSFReactionTool : EditorWindow
             }
             current = candidate;
         }
+    }
+
+    private static void DeleteGeneratedAssetIfExists(string assetPath)
+    {
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return;
+        }
+
+        if (AssetDatabase.LoadMainAssetAtPath(assetPath) == null)
+        {
+            return;
+        }
+
+        AssetDatabase.DeleteAsset(assetPath);
+    }
+
+    private static string PrepareOverwriteAssetPath(string currentPath, string targetFileName)
+    {
+        if (string.IsNullOrWhiteSpace(currentPath) || string.IsNullOrWhiteSpace(targetFileName))
+        {
+            return currentPath;
+        }
+
+        var normalizedPath = currentPath.Replace('\\', '/');
+        var folder = Path.GetDirectoryName(normalizedPath)?.Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return normalizedPath;
+        }
+
+        var desiredPath = $"{folder}/{targetFileName}";
+        if (string.Equals(normalizedPath, desiredPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return desiredPath;
+        }
+
+        if (AssetDatabase.LoadMainAssetAtPath(normalizedPath) == null)
+        {
+            return desiredPath;
+        }
+
+        if (AssetDatabase.LoadMainAssetAtPath(desiredPath) != null)
+        {
+            AssetDatabase.DeleteAsset(desiredPath);
+        }
+
+        var moveError = AssetDatabase.MoveAsset(normalizedPath, desiredPath);
+        if (!string.IsNullOrWhiteSpace(moveError))
+        {
+            Debug.LogWarning($"VSF overwrite rename failed: {normalizedPath} -> {desiredPath} ({moveError})");
+            return normalizedPath;
+        }
+
+        return desiredPath;
+    }
+
+    private static string GetGeneratedFolderForPrefabAsset(string prefabPath)
+    {
+        var avatarName = Path.GetFileNameWithoutExtension(prefabPath);
+        return BuildGeneratedFolderPath(avatarName, string.Empty);
+    }
+
+    private static string GetGeneratedFolderForObject(GameObject selected)
+    {
+        if (selected == null)
+        {
+            return BuildGeneratedFolderPath("UnknownAvatar", string.Empty);
+        }
+
+        var prefabAssetPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(selected);
+        if (!string.IsNullOrWhiteSpace(prefabAssetPath))
+        {
+            return GetGeneratedFolderForPrefabAsset(prefabAssetPath);
+        }
+
+        var sceneName = selected.scene.IsValid() ? selected.scene.name : "Scene";
+        return BuildGeneratedFolderPath($"{sceneName}_{selected.name}", string.Empty);
+    }
+
+    private static (string firstDriverClipPath, string secondDriverClipPath, string reactionClipPath, string controllerPath) ResolveOutputAssetPaths(
+        VSF_Animations vsfAnimations,
+        Animator bodyAnimator,
+        SimpleReactionConfig config,
+        string generatedFolder,
+        string outputBaseName,
+        bool overwriteExistingSetupAssets)
+    {
+        var generatedAssetPaths = GetGeneratedAssetPaths(generatedFolder, outputBaseName).ToArray();
+        var firstDriverClipPath = generatedAssetPaths[0];
+        var secondDriverClipPath = generatedAssetPaths[1];
+        var reactionClipPath = generatedAssetPaths[2];
+        var controllerPath = generatedAssetPaths[3];
+
+        if (!overwriteExistingSetupAssets)
+        {
+            return (firstDriverClipPath, secondDriverClipPath, reactionClipPath, controllerPath);
+        }
+
+        firstDriverClipPath = GetExistingDriverClipPath(vsfAnimations, config.firstTriggerName) ?? firstDriverClipPath;
+        if (config.useSecondTrigger)
+        {
+            secondDriverClipPath = GetExistingDriverClipPath(vsfAnimations, config.secondTriggerName) ?? secondDriverClipPath;
+        }
+
+        if (bodyAnimator != null && bodyAnimator.runtimeAnimatorController is AnimatorController existingController)
+        {
+            controllerPath = AssetDatabase.GetAssetPath(existingController) ?? controllerPath;
+            reactionClipPath = GetExistingReactionClipPath(existingController) ?? reactionClipPath;
+        }
+
+        return (firstDriverClipPath, secondDriverClipPath, reactionClipPath, controllerPath);
+    }
+
+    private static string GetOverwritePreviewMessage(GameObject selected, SimpleReactionConfig config, string generatedFolder, string outputBaseName)
+    {
+        if (selected == null || config == null)
+        {
+            return "덮어쓸 대상 미리보기를 만들 수 없습니다.";
+        }
+
+        var vsfAnimations = selected.GetComponent<VSF_Animations>();
+        var animationRoot = selected.transform.Find("Body") ?? selected.transform;
+        var bodyAnimator = animationRoot != null ? animationRoot.GetComponent<Animator>() : null;
+        var assetPaths = ResolveOutputAssetPaths(vsfAnimations, bodyAnimator, config, generatedFolder, outputBaseName, true);
+
+        var lines = new List<string>
+        {
+            $"Trigger1: {Path.GetFileName(assetPaths.firstDriverClipPath)}",
+            $"Reaction: {Path.GetFileName(assetPaths.reactionClipPath)}",
+            $"Controller: {Path.GetFileName(assetPaths.controllerPath)}",
+        };
+
+        if (config.useSecondTrigger)
+        {
+            lines.Insert(1, $"Trigger2: {Path.GetFileName(assetPaths.secondDriverClipPath)}");
+        }
+
+        return "덮어쓸 파일\n" + string.Join("\n", lines);
+    }
+
+    private static string GetExistingDriverClipPath(VSF_Animations vsfAnimations, string blendshapeName)
+    {
+        if (vsfAnimations?.animations == null || string.IsNullOrWhiteSpace(blendshapeName))
+        {
+            return null;
+        }
+
+        foreach (var entry in vsfAnimations.animations)
+        {
+            if (!string.Equals(entry.blendshapeName, blendshapeName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var clipPath = AssetDatabase.GetAssetPath(entry.animation);
+            if (!string.IsNullOrWhiteSpace(clipPath))
+            {
+                return clipPath;
+            }
+        }
+
+        return null;
+    }
+
+    private static string GetExistingReactionClipPath(AnimatorController controller)
+    {
+        if (controller == null || controller.layers == null || controller.layers.Length == 0)
+        {
+            return null;
+        }
+
+        var stateMachine = controller.layers[0].stateMachine;
+        foreach (var childState in stateMachine.states)
+        {
+            if (!string.Equals(childState.state.name, "Play", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (childState.state.motion is AnimationClip clip)
+            {
+                var clipPath = AssetDatabase.GetAssetPath(clip);
+                if (!string.IsNullOrWhiteSpace(clipPath))
+                {
+                    return clipPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool HasGeneratedAssets(string generatedFolder, string outputBaseName)
+    {
+        if (string.IsNullOrWhiteSpace(generatedFolder) || !AssetDatabase.IsValidFolder(generatedFolder))
+        {
+            return false;
+        }
+
+        return GetGeneratedAssetPaths(generatedFolder, outputBaseName)
+            .Any(assetPath => AssetDatabase.LoadMainAssetAtPath(assetPath) != null);
+    }
+
+    private static bool HasExistingDriverSetup(GameObject selected)
+    {
+        if (selected == null)
+        {
+            return false;
+        }
+
+        return selected.transform.Find("VSF Delay Drivers") != null
+            || selected.transform.Find("VSF Reaction Drivers") != null;
+    }
+
+    private static string GetNextGeneratedAssetBaseName(string generatedFolder, string baseName)
+    {
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            return "VSF_Reaction";
+        }
+
+        for (var index = 2; index < 1000; index++)
+        {
+            var candidate = $"{baseName}_{index:00}";
+            if (!GetGeneratedAssetPaths(generatedFolder, candidate).Any(assetPath => AssetDatabase.LoadMainAssetAtPath(assetPath) != null))
+            {
+                return candidate;
+            }
+        }
+
+        return baseName + "_Copy";
+    }
+
+    private static IEnumerable<string> GetGeneratedAssetPaths(string generatedFolder, string outputBaseName)
+    {
+        var safeBaseName = SanitizeAssetBaseName(outputBaseName);
+        yield return $"{generatedFolder}/{safeBaseName}_Trigger1.anim";
+        yield return $"{generatedFolder}/{safeBaseName}_Trigger2.anim";
+        yield return $"{generatedFolder}/{safeBaseName}.anim";
+        yield return $"{generatedFolder}/{safeBaseName}.controller";
+    }
+
+    private static string GetOutputBaseName(SimpleReactionConfig config)
+    {
+        if (config == null)
+        {
+            return "VSF_Reaction";
+        }
+
+        var preferredName = string.IsNullOrWhiteSpace(config.outputAssetName)
+            ? config.reactionSourceClip != null ? config.reactionSourceClip.name : "VSF_Reaction"
+            : config.outputAssetName;
+
+        return SanitizeAssetBaseName(preferredName);
+    }
+
+    private static string SanitizeAssetBaseName(string value)
+    {
+        var safeName = SanitizeFolderName(value);
+        return string.IsNullOrWhiteSpace(safeName) ? "VSF_Reaction" : safeName;
+    }
+
+    private static string BuildGeneratedFolderPath(string baseName, string guid)
+    {
+        return GeneratedFolderRootPath;
+    }
+
+    private static string SanitizeFolderName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "Avatar";
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var chars = value.Trim().Select(ch => invalidChars.Contains(ch) || ch == '/' || ch == '\\' ? '_' : ch).ToArray();
+        return new string(chars);
     }
 
     // 애니메이션 클립을 불러오고, 없으면 새로 생성합니다.
