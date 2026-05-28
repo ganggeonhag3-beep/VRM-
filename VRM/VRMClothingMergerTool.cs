@@ -100,11 +100,8 @@ public class VRMClothingMergerWindow : EditorWindow
 
         var movedBones = 0;
         var movedSmrs = 0;
-        var renamedSmrs = 0;
-        var renamedBones = 0;
         var movedSpringNodes = 0;
-        var renamedSpringNodes = 0;
-        var deletedObjects = 0;
+        var clothingRootDeleted = false;
 
         try
         {
@@ -150,7 +147,6 @@ public class VRMClothingMergerWindow : EditorWindow
 
                     Undo.RecordObject(bone.gameObject, "Rename Clothing Bone");
                     bone.name = bone.name + nameSuffix;
-                    renamedBones++;
                 }
             }
 
@@ -174,7 +170,6 @@ public class VRMClothingMergerWindow : EditorWindow
                 {
                     Undo.RecordObject(t.gameObject, "Rename Clothing SkinnedMesh");
                     t.name = t.name + suffix;
-                    renamedSmrs++;
                 }
             }
 
@@ -209,15 +204,12 @@ public class VRMClothingMergerWindow : EditorWindow
                     {
                         Undo.RecordObject(t.gameObject, "Rename VRM SpringBone Node");
                         t.name = t.name + sfx;
-                        renamedSpringNodes++;
                     }
                 }
             }
 
             // 4) 옷 루트 삭제: 옷 루트 아래에 본이 남아있으면 SMR이 깨질 수 있으므로 삭제를 건너뜀
             {
-                var stopAt = avatarRootT;
-
                 var remainingUnderClothingRoot = clothingBones
                     .Where(b => b != null && b.IsChildOf(clothingRootT))
                     .Distinct()
@@ -229,11 +221,26 @@ public class VRMClothingMergerWindow : EditorWindow
                 }
                 else
                 {
-                    DeleteObjectAndEmptyParents(clothingRootT.gameObject, stopAt, deleteEmptyParents: true, ref deletedObjects);
+                    // 옷 루트 + 그 위로 비어있는 부모들도 함께 삭제 (avatarRootT 에서 멈춤)
+                    var parent = clothingRootT.parent;
+                    Undo.DestroyObjectImmediate(clothingRootT.gameObject);
+                    clothingRootDeleted = true;
+
+                    while (parent != null && parent != avatarRootT)
+                    {
+                        if (parent.childCount > 0) break;
+                        if (parent.GetComponents<Component>().Length > 1) break; // Transform 외 컴포넌트 있음
+
+                        var go = parent.gameObject;
+                        parent = parent.parent;
+                        Undo.DestroyObjectImmediate(go);
+                    }
                 }
             }
 
-            var summary = $"완료\n\n본 이동: {movedBones}\n본 이름변경: {renamedBones}\nSMR 이동: {movedSmrs}\nSMR 이름변경: {renamedSmrs}\nSpringBone 노드 이동: {movedSpringNodes}\nSpringBone 노드 이름변경: {renamedSpringNodes}\n삭제: {deletedObjects}";
+            var totalMoved = movedBones + movedSmrs + movedSpringNodes;
+            var summary = $"완료\n\n이동: {totalMoved}개" +
+                          (clothingRootDeleted ? "" : "\n\n⚠ 옷 루트 정리 안 됨 (Console 확인)");
             EditorUtility.DisplayDialog("의상 합치기", summary, "OK");
         }
         catch (Exception ex)
@@ -271,56 +278,19 @@ public class VRMClothingMergerWindow : EditorWindow
 
         var avatarRootT = m_avatarRoot.transform;
 
-        var allSmrs = avatarRootT.GetComponentsInChildren<SkinnedMeshRenderer>(true)
-            .Where(s => s != null)
+        // 접미사로 끝나는 모든 Transform 수집 (SMR/본 구분 없이)
+        var targets = avatarRootT.GetComponentsInChildren<Transform>(true)
+            .Where(t => t != null && t != avatarRootT && t.name.EndsWith(suffix, StringComparison.Ordinal))
             .ToArray();
 
-        var targetSmrs = allSmrs
-            .Where(s => s.name.EndsWith(suffix, StringComparison.Ordinal))
-            .ToArray();
-
-        var targetSmrTransforms = new HashSet<Transform>(targetSmrs.Select(s => s.transform));
-
-        var targetBones = avatarRootT.GetComponentsInChildren<Transform>(true)
-            .Where(t => t != null
-                        && t != avatarRootT
-                        && t.name.EndsWith(suffix, StringComparison.Ordinal)
-                        && !targetSmrTransforms.Contains(t))
-            .ToArray();
-
-        var bonesUsedByOthers = new HashSet<Transform>();
-        foreach (var smr in allSmrs)
+        if (targets.Length == 0)
         {
-            if (targetSmrTransforms.Contains(smr.transform)) continue;
-
-            if (smr.rootBone != null) bonesUsedByOthers.Add(smr.rootBone);
-            var bones = smr.bones;
-            if (bones != null)
-            {
-                for (var i = 0; i < bones.Length; i++)
-                {
-                    if (bones[i] != null) bonesUsedByOthers.Add(bones[i]);
-                }
-            }
-        }
-
-        var bonesToDelete = targetBones.Where(b => !bonesUsedByOthers.Contains(b)).ToArray();
-        var bonesSkipped = targetBones.Length - bonesToDelete.Length;
-
-        if (targetSmrs.Length == 0 && bonesToDelete.Length == 0)
-        {
-            EditorUtility.DisplayDialog("의상 제거", $"'{suffix}' 으로 끝나는 대상이 없습니다.", "OK");
+            EditorUtility.DisplayDialog("의상 제거", $"'{suffix}' 으로 끝나는 오브젝트가 없습니다.", "OK");
             return;
         }
 
-        // 3) 확인 다이얼로그
         var displayName = suffix.TrimStart('_');
-        var message = $"{displayName}\n\nSMR 삭제: {targetSmrs.Length}개\n본 삭제: {bonesToDelete.Length}개";
-        if (bonesSkipped > 0)
-        {
-            message += $"\n(다른 SMR이 사용 중이라 건너뛴 본: {bonesSkipped}개)";
-        }
-        message += "\n\n진행할까요?";
+        var message = $"{displayName}\n\n삭제할 오브젝트: {targets.Length}개\n\n진행할까요?";
 
         if (!EditorUtility.DisplayDialog("의상 제거 확인", message, "삭제", "취소"))
         {
@@ -331,55 +301,27 @@ public class VRMClothingMergerWindow : EditorWindow
         Undo.IncrementCurrentGroup();
         Undo.SetCurrentGroupName("VRM 의상 제거");
 
-        var deletedSmrs = 0;
-        var deletedBones = 0;
-        var deletedEmpties = 0;
+        var deletedCount = 0;
 
         try
         {
-            // 4-1) SMR 삭제 (+ 빈 부모 정리)
-            foreach (var smr in targetSmrs)
-            {
-                if (smr == null) continue;
-                var go = smr.gameObject;
-                if (go == null) continue;
-
-                var count = 0;
-                DeleteObjectAndEmptyParents(go, avatarRootT, deleteEmptyParents: true, ref count);
-                if (count > 0)
-                {
-                    deletedSmrs++;
-                    deletedEmpties += count - 1;
-                }
-            }
-
-            // 4-2) 본 삭제: 깊은 것부터 (부모가 먼저 사라져 참조 깨지는 문제 회피)
-            var sortedBones = bonesToDelete
-                .Where(b => b != null)
+            // 깊은 것부터 처리
+            var sorted = targets
+                .Where(t => t != null)
                 .OrderByDescending(GetTransformDepth)
                 .ToArray();
 
-            foreach (var bone in sortedBones)
+            foreach (var t in sorted)
             {
-                if (bone == null) continue;
-                var go = bone.gameObject;
+                if (t == null) continue;
+                var go = t.gameObject;
                 if (go == null) continue;
 
-                var count = 0;
-                DeleteObjectAndEmptyParents(go, avatarRootT, deleteEmptyParents: true, ref count);
-                if (count > 0)
-                {
-                    deletedBones++;
-                    deletedEmpties += count - 1;
-                }
+                Undo.DestroyObjectImmediate(go);
+                deletedCount++;
             }
 
-            var summary = $"완료\n\nSMR 삭제: {deletedSmrs}\n본 삭제: {deletedBones}\n빈 부모 정리: {deletedEmpties}";
-            if (bonesSkipped > 0)
-            {
-                summary += $"\n사용 중이라 건너뜀: {bonesSkipped}";
-            }
-            EditorUtility.DisplayDialog("의상 제거", summary, "OK");
+            EditorUtility.DisplayDialog("의상 제거", $"완료\n\n삭제: {deletedCount}개", "OK");
         }
         catch (Exception ex)
         {
@@ -400,7 +342,6 @@ public class VRMClothingMergerWindow : EditorWindow
         return d;
     }
 
-    // VRM SpringBone / ColliderGroup 계열 컴포넌트가 붙은 GameObject 수집 (UniVRM 어셈블리 의존 X)
     private static Transform[] CollectSpringBoneOwners(Transform clothingRoot)
     {
         var result = new HashSet<Transform>();
@@ -491,54 +432,6 @@ public class VRMClothingMergerWindow : EditorWindow
         }
 
         return trimmed;
-    }
-
-    // 오브젝트 삭제
-    private void DeleteObjectAndEmptyParents(GameObject target, Transform stopAt, bool deleteEmptyParents, ref int deletedCount)
-    {
-        if (target == null) return;
-
-        if (stopAt != null)
-        {
-            var t = target.transform;
-            if (t == stopAt || stopAt.IsChildOf(t))
-            {
-                return;
-            }
-        }
-
-        var parent = target.transform.parent;
-        Undo.DestroyObjectImmediate(target);
-        deletedCount++;
-
-        if (!deleteEmptyParents)
-        {
-            return;
-        }
-
-        while (parent != null)
-        {
-            if (stopAt != null && parent == stopAt)
-            {
-                break;
-            }
-
-            if (parent.childCount > 0)
-            {
-                break;
-            }
-
-            var comps = parent.GetComponents<Component>();
-            if (comps != null && comps.Length > 1)
-            {
-                break;
-            }
-
-            var go = parent.gameObject;
-            parent = parent.parent;
-            Undo.DestroyObjectImmediate(go);
-            deletedCount++;
-        }
     }
 
 }
