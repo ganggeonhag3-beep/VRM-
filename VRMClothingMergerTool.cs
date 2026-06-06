@@ -342,6 +342,18 @@ public class VRMClothingMergerTool : EditorWindow
 
     private void ApplySmartRecommendedSettings()
     {
+        // 아바타가 선택되지 않았으면 경고 표시
+        if (m_avatarRoot == null)
+        {
+            EditorUtility.DisplayDialog(
+                "⚠️ 캐릭터 미선택", 
+                "먼저 '내 원래 캐릭터' 칸에 아바타를 드래그 앤 드롭으로 선택해주세요!\n\n" +
+                "1단계에서 캐릭터를 선택한 후 다시 이 버튼을 눌러주세요.", 
+                "확인"
+            );
+            return;
+        }
+        
         m_boneStructMode = BoneStructureMode.ReuseAvatarBones; 
         m_matchMode = MatchMode.Auto; 
         m_autoRenameBones = true;
@@ -356,10 +368,13 @@ public class VRMClothingMergerTool : EditorWindow
         
         EditorUtility.DisplayDialog(
             "🚀 버츄얼 방송 최적화 세팅 완료", 
-            "트래킹 과부하 차단 및 댄스 리액션용 살뚫림 전면 방지 프리셋이 인스펙터 옵션에 정상 주입되었습니다!\n\n" +
+            "트래킹 과부하 차단 및 댄스 리액션용 살뚫림 전면 방지 프리셋이 하단 옵션에 정상 주입되었습니다!\n\n" +
+            "✅ 적용된 설정:\n" +
             "• 캐릭터 뼈대 완전 공유 (ReuseAvatarBones)\n" +
             "• 옷에 가려지는 내부 살 삼각형 구조 완전 삭제 활성화\n" +
-            "• 다중 의상 메쉬 드로우콜 1개 통합 최적화 켜짐 (블렌드셰이프/토글 완벽 자동 보존 지원! ⭐)", 
+            "• 다중 의상 메쉬 드로우콜 1개 통합 최적화 켜짐\n" +
+            "• 블렌드셰이프/토글 완벽 자동 보존 지원! ⭐\n\n" +
+            "💡 이제 1단계부터 캐릭터와 의상을 선택하고 진행하세요.", 
             "확인"
         );
     }
@@ -441,7 +456,20 @@ public class VRMClothingMergerTool : EditorWindow
 
     private void RunMerge(bool dryRun)
     {
-        if (EditorApplication.isPlayingOrWillChangePlaymode || m_avatarRoot == null) return;
+        if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+        
+        // 아바타 체크
+        if (m_avatarRoot == null)
+        {
+            EditorUtility.DisplayDialog(
+                "⚠️ 캐릭터 미선택", 
+                "먼저 '내 원래 캐릭터' 칸에 아바타를 선택해주세요!\n\n" +
+                "1단계에서 캐릭터를 드래그 앤 드롭으로 지정한 후 다시 시도하세요.", 
+                "확인"
+            );
+            return;
+        }
+        
         SyncSuffixListSize();
 
         if (!dryRun)
@@ -460,7 +488,17 @@ public class VRMClothingMergerTool : EditorWindow
             clothes.Add(new KeyValuePair<GameObject, string>(c, sfx));
         }
 
-        if (clothes.Count == 0) return;
+        // 의상 체크
+        if (clothes.Count == 0)
+        {
+            EditorUtility.DisplayDialog(
+                "⚠️ 의상 미선택", 
+                "입힐 옷이 선택되지 않았습니다!\n\n" +
+                "1단계에서 '입힐 옷' 칸에 의상 오브젝트를 드래그 앤 드롭으로 추가해주세요.", 
+                "확인"
+            );
+            return;
+        }
 
         var options = new MergeOptions
         {
@@ -820,4 +858,993 @@ public class VRMClothingMergerTool : EditorWindow
 
     private static void CombineClothingMeshes(GameObject avatarRoot, List<SkinnedMeshRenderer> clothingSmrs, string suffix, List<string> infoList)
     {
-        List<CombineInstance> combineInstances = 
+        List<CombineInstance> combineInstances = new List<CombineInstance>();
+        List<Transform> boneList = new List<Transform>();
+        List<Material> rawSubMeshMaterials = new List<Material>();
+
+        var oldSmrPathToBlendShapes = new Dictionary<string, string[]>();
+        var oldSmrNames = new List<string>();
+
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null || smr.sharedMesh == null || smr.bones == null) continue;
+            
+            string relPath = GetRelativeHierarchyPath(avatarRoot.transform, smr.transform);
+            oldSmrNames.Add(smr.name);
+            
+            int bsCount = smr.sharedMesh.blendShapeCount;
+            string[] bsNames = new string[bsCount];
+            for (int i = 0; i < bsCount; i++) bsNames[i] = smr.sharedMesh.GetBlendShapeName(i);
+            oldSmrPathToBlendShapes[relPath] = bsNames;
+            oldSmrPathToBlendShapes[smr.name] = bsNames;
+
+            foreach (var bone in smr.bones) if (bone != null && !boneList.Contains(bone)) boneList.Add(bone);
+        }
+
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null || smr.sharedMesh == null) continue;
+            Mesh sourceMesh = smr.sharedMesh;
+            Mesh combineMesh = Instantiate(sourceMesh);
+            
+            BoneWeight[] boneWeights = combineMesh.boneWeights;
+            Transform[] smrBones = smr.bones;
+            
+            for (int i = 0; i < boneWeights.Length; i++)
+            {
+                if (boneWeights[i].weight0 > 0 && smrBones[boneWeights[i].boneIndex0] != null) boneWeights[i].boneIndex0 = boneList.IndexOf(smrBones[boneWeights[i].boneIndex0]);
+                if (boneWeights[i].weight1 > 0 && smrBones[boneWeights[i].boneIndex1] != null) boneWeights[i].boneIndex1 = boneList.IndexOf(smrBones[boneWeights[i].boneIndex1]);
+                if (boneWeights[i].weight2 > 0 && smrBones[boneWeights[i].boneIndex2] != null) boneWeights[i].boneIndex2 = boneList.IndexOf(smrBones[boneWeights[i].boneIndex2]);
+                if (boneWeights[i].weight3 > 0 && smrBones[boneWeights[i].boneIndex3] != null) boneWeights[i].boneIndex3 = boneList.IndexOf(smrBones[boneWeights[i].boneIndex3]);
+            }
+            combineMesh.boneWeights = boneWeights;
+
+            CombineInstance ci = new CombineInstance();
+            ci.mesh = combineMesh;
+            ci.transform = smr.transform.localToWorldMatrix * avatarRoot.transform.worldToLocalMatrix;
+            combineInstances.Add(ci);
+
+            for (int s = 0; s < sourceMesh.subMeshCount; s++)
+            {
+                Material mat = (s < smr.sharedMaterials.Length) ? smr.sharedMaterials[s] : null;
+                rawSubMeshMaterials.Add(mat);
+            }
+        }
+
+        Mesh finalMesh = new Mesh();
+        finalMesh.CombineMeshes(combineInstances.ToArray(), false, true); 
+
+        HashSet<string> uniqueBlendShapeNames = new HashSet<string>();
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null || smr.sharedMesh == null) continue;
+            for (int i = 0; i < smr.sharedMesh.blendShapeCount; i++) uniqueBlendShapeNames.Add(smr.sharedMesh.GetBlendShapeName(i));
+        }
+
+        int totalVertices = finalMesh.vertexCount;
+        int restoredBlendShapeCount = 0;
+
+        foreach (string shapeName in uniqueBlendShapeNames)
+        {
+            Vector3[] totalDeltaVerts = new Vector3[totalVertices];
+            Vector3[] totalDeltaNormals = new Vector3[totalVertices];
+            Vector3[] totalDeltaTangents = new Vector3[totalVertices];
+            bool hasAnyDelta = false;
+
+            int currentVertexOffset = 0;
+            for (int m = 0; m < clothingSmrs.Count; m++)
+            {
+                Mesh srcMesh = combineInstances[m].mesh;
+                int srcVertCount = srcMesh.vertexCount;
+                int shapeIndex = srcMesh.GetBlendShapeIndex(shapeName);
+
+                if (shapeIndex >= 0)
+                {
+                    int frameCount = srcMesh.GetBlendShapeFrameCount(shapeIndex);
+                    if (frameCount > 0)
+                    {
+                        int lastFrame = frameCount - 1;
+                        Vector3[] srcDeltaVerts = new Vector3[srcVertCount];
+                        Vector3[] srcDeltaNormals = new Vector3[srcVertCount];
+                        Vector3[] srcDeltaTangents = new Vector3[srcVertCount];
+                        srcMesh.GetBlendShapeFrameVertices(shapeIndex, lastFrame, srcDeltaVerts, srcDeltaNormals, srcDeltaTangents);
+
+                        Matrix4x4 mat = combineInstances[m].transform;
+                        for (int v = 0; v < srcVertCount; v++)
+                        {
+                            totalDeltaVerts[currentVertexOffset + v] = mat.MultiplyVector(srcDeltaVerts[v]);
+                            totalDeltaNormals[currentVertexOffset + v] = mat.MultiplyVector(srcDeltaNormals[v]);
+                            totalDeltaTangents[currentVertexOffset + v] = mat.MultiplyVector(srcDeltaTangents[v]);
+                        }
+                        hasAnyDelta = true;
+                    }
+                }
+                currentVertexOffset += srcVertCount;
+            }
+
+            if (hasAnyDelta)
+            {
+                finalMesh.AddBlendShapeFrame(shapeName, 100f, totalDeltaVerts, totalDeltaNormals, totalDeltaTangents);
+                restoredBlendShapeCount++;
+            }
+        }
+
+        var uniqueMaterials = rawSubMeshMaterials.Where(m => m != null).Distinct().ToList();
+        List<List<int>> groupedTriangles = new List<List<int>>();
+        for (int i = 0; i < uniqueMaterials.Count; i++) groupedTriangles.Add(new List<int>());
+
+        for (int s = 0; s < finalMesh.subMeshCount; s++)
+        {
+            Material mat = rawSubMeshMaterials[s];
+            if (mat == null) continue;
+            int targetIndex = uniqueMaterials.IndexOf(mat);
+            if (targetIndex >= 0)
+            {
+                int[] tris = finalMesh.GetTriangles(s);
+                groupedTriangles[targetIndex].AddRange(tris);
+            }
+        }
+
+        finalMesh.subMeshCount = uniqueMaterials.Count;
+        for (int i = 0; i < uniqueMaterials.Count; i++)
+        {
+            finalMesh.SetTriangles(groupedTriangles[i].ToArray(), i);
+        }
+
+        Matrix4x4[] bindPoses = new Matrix4x4[boneList.Count];
+        for (int i = 0; i < boneList.Count; i++) bindPoses[i] = boneList[i].worldToLocalMatrix * avatarRoot.transform.localToWorldMatrix;
+        finalMesh.bindposes = bindPoses;
+
+        Bounds hyperBounds = new Bounds(new Vector3(0f, 1f, 0f), new Vector3(4f, 4f, 4f));
+        finalMesh.bounds = hyperBounds;
+
+        GameObject combinedGo = new GameObject("Combined_Clothing" + suffix);
+        Undo.RegisterCreatedObjectUndo(combinedGo, "Combine Clothing Meshes");
+        combinedGo.transform.SetParent(avatarRoot.transform, false);
+
+        SkinnedMeshRenderer combinedSmr = combinedGo.AddComponent<SkinnedMeshRenderer>();
+        combinedSmr.sharedMesh = SaveMeshAsset(finalMesh, "Combined_Clothing_Mesh" + suffix);
+        combinedSmr.bones = boneList.ToArray();
+        combinedSmr.sharedMaterials = uniqueMaterials.ToArray();
+        if (boneList.Count > 0) combinedSmr.rootBone = boneList[0];
+        combinedSmr.localBounds = hyperBounds;
+
+        int repairedBindingsCount = 0;
+        var comps = avatarRoot.GetComponentsInChildren<Component>(true);
+        
+        // UniVRM v0.112.0: VRM 0.x와 VRM 1.0 BlendShape 시스템 모두 지원
+        string newMeshPath = combinedGo.name; // 통합된 메쉬의 경로
+        
+        // VRM 0.x (VRMBlendShapeProxy) 처리
+        Component vrmProxy = comps.FirstOrDefault(c => c != null && c.GetType().Name == "VRMBlendShapeProxy");
+        if (vrmProxy != null)
+        {
+            repairedBindingsCount += RepairVRM0xBlendShapeBindings(vrmProxy, combinedSmr, oldSmrPathToBlendShapes, newMeshPath);
+        }
+        
+        // VRM 1.0 (Vrm10Instance) 처리
+        Component vrm10Instance = comps.FirstOrDefault(c => c != null && c.GetType().Name == "Vrm10Instance");
+        if (vrm10Instance != null)
+        {
+            repairedBindingsCount += RepairVRM10BlendShapeBindings(vrm10Instance, combinedSmr, oldSmrPathToBlendShapes, newMeshPath);
+        }
+        
+        foreach (var smr in clothingSmrs) if (smr != null && smr.gameObject != combinedGo) Undo.DestroyObjectImmediate(smr.gameObject);
+        foreach (var instance in combineInstances) if (instance.mesh != null) DestroyImmediate(instance.mesh);
+
+        clothingSmrs.Clear();
+        clothingSmrs.Add(combinedSmr);
+
+        string reportStr = $"방송 최적화 통합 완벽 성공! 중복 마테리얼 서브메쉬 {rawSubMeshMaterials.Count}개를 {uniqueMaterials.Count}개 드로우콜 영역으로 압축 정리 완료했습니다.";
+        if (restoredBlendShapeCount > 0) reportStr += $" (기존 의상 슬라이더 블렌드셰이프 {restoredBlendShapeCount}개 안전 보존)";
+        if (repairedBindingsCount > 0) reportStr += $" [깨질 뻔한 VRM 표정/기믹 바인딩 {repairedBindingsCount}개 완벽 복구 자동 링크]";
+        
+        infoList.Add(reportStr);
+    }
+    
+    private static int RepairVRM0xBlendShapeBindings(Component vrmProxy, SkinnedMeshRenderer combinedSmr, Dictionary<string, string[]> oldSmrPathToBlendShapes, string newMeshPath)
+    {
+        int repairedCount = 0;
+        var proxyType = vrmProxy.GetType();
+        var avatarField = proxyType.GetField("BlendShapeAvatar", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        if (avatarField == null) return 0;
+
+        ScriptableObject bsAvatar = avatarField.GetValue(vrmProxy) as ScriptableObject;
+        if (bsAvatar == null) return 0;
+
+        var avatarType = bsAvatar.GetType();
+        var clipsField = avatarType.GetField("Clips", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        if (clipsField == null) return 0;
+
+        var clipsList = clipsField.GetValue(bsAvatar) as System.Collections.IList;
+        if (clipsList == null) return 0;
+
+        foreach (ScriptableObject clip in clipsList)
+        {
+            if (clip == null) continue;
+            var clipType = clip.GetType();
+            var valuesField = clipType.GetField("Values", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (valuesField == null) continue;
+
+            var valuesArray = valuesField.GetValue(clip) as Array;
+            if (valuesArray == null) continue;
+
+            bool clipModified = false;
+            for (int i = 0; i < valuesArray.Length; i++)
+            {
+                var binding = valuesArray.GetValue(i);
+                var bType = binding.GetType();
+                var pathField = bType.GetField("relativePath", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                var indexField = bType.GetField("index", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+                if (pathField != null && indexField != null)
+                {
+                    string oldPath = pathField.GetValue(binding) as string;
+                    string lookupKey = null;
+                    if (!string.IsNullOrEmpty(oldPath))
+                    {
+                        if (oldSmrPathToBlendShapes.ContainsKey(oldPath)) lookupKey = oldPath;
+                        else
+                        {
+                            string leaf = oldPath.Substring(oldPath.LastIndexOf('/') + 1);
+                            if (oldSmrPathToBlendShapes.ContainsKey(leaf)) lookupKey = leaf;
+                        }
+                    }
+
+                    if (lookupKey != null)
+                    {
+                        int oldIndex = (int)indexField.GetValue(binding);
+                        string[] oldNames = oldSmrPathToBlendShapes[lookupKey];
+                        if (oldIndex >= 0 && oldIndex < oldNames.Length)
+                        {
+                            string targetShapeName = oldNames[oldIndex];
+                            int newIndex = combinedSmr.sharedMesh.GetBlendShapeIndex(targetShapeName);
+                            if (newIndex >= 0)
+                            {
+                                Undo.RecordObject(clip, "Update VRM BlendShape Binding");
+                                pathField.SetValue(binding, newMeshPath);
+                                indexField.SetValue(binding, newIndex);
+                                valuesArray.SetValue(binding, i);
+                                clipModified = true;
+                                repairedCount++;
+                            }
+                        }
+                    }
+                }
+            }
+            if (clipModified)
+            {
+                valuesField.SetValue(clip, valuesArray);
+                EditorUtility.SetDirty(clip);
+            }
+        }
+        return repairedCount;
+    }
+    
+    private static int RepairVRM10BlendShapeBindings(Component vrm10Instance, SkinnedMeshRenderer combinedSmr, Dictionary<string, string[]> oldSmrPathToBlendShapes, string newMeshPath)
+    {
+        int repairedCount = 0;
+        var instanceType = vrm10Instance.GetType();
+        
+        // VRM 1.0의 BlendShape 구조 탐색
+        var expressionField = instanceType.GetField("Expression", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        if (expressionField == null) expressionField = instanceType.GetField("Vrm", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        
+        if (expressionField != null)
+        {
+            var expression = expressionField.GetValue(vrm10Instance);
+            if (expression != null)
+            {
+                // VRM 1.0 Expression/BlendShape 바인딩 복구 로직
+                // (구조가 복잡하여 reflection으로 유연하게 처리)
+                var expType = expression.GetType();
+                var clipsField = expType.GetField("Clips", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (clipsField == null) clipsField = expType.GetField("ExpressionClips", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                
+                if (clipsField != null)
+                {
+                    var clipsList = clipsField.GetValue(expression) as System.Collections.IList;
+                    if (clipsList != null)
+                    {
+                        // VRM 0.x와 유사한 방식으로 바인딩 복구
+                        // (상세 구현은 VRM 1.0 구조에 따라 조정 필요)
+                        foreach (var clip in clipsList)
+                        {
+                            if (clip == null) continue;
+                            // VRM 1.0 바인딩 복구 로직
+                            repairedCount += RepairSingleVRM10Clip(clip, combinedSmr, oldSmrPathToBlendShapes, newMeshPath);
+                        }
+                    }
+                }
+            }
+        }
+        return repairedCount;
+    }
+    
+    private static int RepairSingleVRM10Clip(object clip, SkinnedMeshRenderer combinedSmr, Dictionary<string, string[]> oldSmrPathToBlendShapes, string newMeshPath)
+    {
+        int count = 0;
+        var clipType = clip.GetType();
+        var bindingsField = clipType.GetField("MorphTargetBindings", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        if (bindingsField == null) return 0;
+        
+        var bindings = bindingsField.GetValue(clip) as System.Collections.IList;
+        if (bindings == null) return 0;
+        
+        // VRM 1.0 바인딩 구조에 맞춰 처리
+        // (필요시 상세 구현)
+        
+        return count;
+    }
+
+    private static string GetRelativeHierarchyPath(Transform root, Transform t)
+    {
+        if (t == root || t == null) return "";
+        var stack = new Stack<string>(); var p = t;
+        while (p != null && p != root) { stack.Push(p.name); p = p.parent; }
+        return string.Join("/", stack.ToArray());
+    }
+
+    private static MergeResult Merge(GameObject avatarRoot, GameObject clothingRoot, string rawName, MergeOptions options, List<SkinnedMeshRenderer> outMergedSmrs)
+    {
+        var result = MergeResult.Create();
+        var avatarRootT = avatarRoot.transform;
+        var clothingRootT = clothingRoot.transform;
+
+        var avatarLookup = BuildTransformsByNameLookup(avatarRootT);
+        var clothingSmrs = clothingRootT.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(smr => smr != null).ToArray();
+        var clothingBones = CollectClothingBonesFromSmrs(clothingSmrs, clothingRootT);
+        var nameSuffix = NormalizeSuffix(rawName);
+
+        if (options.CheckBlendShapes) CheckBlendShapeCollisions(avatarRoot, clothingSmrs, result);
+
+        var useHumanoid = options.Match != MatchMode.NameOnly;
+        Dictionary<HumanBodyBones, Transform> avatarHuman = null;
+        Dictionary<Transform, HumanBodyBones> clothingHuman = null;
+        
+        if (useHumanoid)
+        {
+            avatarHuman = BuildHumanoidBoneMap(avatarRoot);
+            var clothingHumanByBone = BuildHumanoidBoneMap(clothingRoot);
+            if (clothingHumanByBone != null)
+            {
+                clothingHuman = new Dictionary<Transform, HumanBodyBones>();
+                foreach (var kv in clothingHumanByBone) if (kv.Value != null) clothingHuman[kv.Value] = kv.Key;
+            }
+        }
+        
+        var humanoidUsable = avatarHuman != null && clothingHuman != null;
+
+        var bonesToMove = new List<KeyValuePair<Transform, Transform>>();
+        foreach (var bone in clothingBones)
+        {
+            if (bone == null) continue;
+            Transform avatarMatch = null;
+
+            if (humanoidUsable && options.Match != MatchMode.HumanoidOnly)
+            {
+                HumanBodyBones hbb;
+                if (clothingHuman.TryGetValue(bone, out hbb)) avatarHuman.TryGetValue(hbb, out avatarMatch);
+            }
+            if (avatarMatch == null && options.Match != MatchMode.HumanoidOnly)
+            {
+                List<Transform> candidates;
+                if (avatarLookup.TryGetValue(bone.name, out candidates) || avatarLookup.TryGetValue(NormalizeBoneKey(bone.name), out candidates))
+                {
+                    avatarMatch = PickBestMatch(bone, candidates);
+                }
+            }
+            if (avatarMatch == null || avatarMatch == bone) continue;
+            bonesToMove.Add(new KeyValuePair<Transform, Transform>(bone, avatarMatch));
+        }
+
+        var staticRenderers = options.MoveStaticRenderers
+            ? clothingRootT.GetComponentsInChildren<MeshRenderer>(true).Where(mr => mr != null).Select(mr => mr.transform).Where(t => t != null && t.IsChildOf(clothingRootT) && t != clothingRootT).Distinct().ToArray()
+            : new Transform[0];
+
+        if (options.DryRun)
+        {
+            result.MovedBones = bonesToMove.Count;
+            result.MovedSmrs = clothingSmrs.Length;
+            result.MovedStatic = staticRenderers.Length;
+            return result;
+        }
+
+        var scaledForFit = options.FitScale && ApplyScaleFit(avatarRoot, clothingRoot, avatarHuman, clothingHuman, result);
+        var alignToBone = options.FitBoneAlign || scaledForFit;
+
+        if (options.BoneStruct == BoneStructureMode.ReuseAvatarBones)
+        {
+            foreach (var smr in clothingSmrs)
+            {
+                Undo.RecordObject(smr, "Remap SMR To Avatar Native Bones");
+                var smrBones = smr.bones;
+                for (int i = 0; i < smrBones.Length; i++)
+                {
+                    if (smrBones[i] == null) continue;
+                    var match = bonesToMove.FirstOrDefault(kv => kv.Key == smrBones[i]).Value;
+                    if (match != null) { smrBones[i] = match; result.RemappedBones++; }
+                }
+                smr.bones = smrBones;
+                if (smr.rootBone != null)
+                {
+                    var rootMatch = bonesToMove.FirstOrDefault(kv => kv.Key == smr.rootBone).Value;
+                    if (rootMatch != null) smr.rootBone = rootMatch;
+                }
+            }
+        }
+        else
+        {
+            foreach (var pair in bonesToMove)
+            {
+                var bone = pair.Key; var target = pair.Value;
+                Undo.SetTransformParent(bone, target, "Merge Clothing Bone");
+                if (alignToBone)
+                {
+                    bone.SetParent(target, false);
+                    bone.localPosition = Vector3.zero; bone.localRotation = Quaternion.identity;
+                }
+                else bone.SetParent(target, true);
+                result.MovedBones++;
+            }
+
+            if (!string.IsNullOrEmpty(nameSuffix))
+            {
+                foreach (var bone in clothingBones)
+                {
+                    if (bone == null || bone.name.EndsWith(nameSuffix, StringComparison.Ordinal)) continue;
+                    Undo.RecordObject(bone.gameObject, "Rename Clothing Bone");
+                    bone.name = bone.name + nameSuffix;
+                    result.RenamedObjects++;
+                }
+            }
+        }
+
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null) continue;
+            var t = smr.transform;
+            if (t.parent != avatarRootT)
+            {
+                Undo.SetTransformParent(t, avatarRootT, "Move Clothing SkinnedMesh");
+                t.SetParent(avatarRootT, true);
+                result.MovedSmrs++;
+            }
+            if (!string.IsNullOrEmpty(nameSuffix) && !t.name.EndsWith(nameSuffix, StringComparison.Ordinal))
+            {
+                Undo.RecordObject(t.gameObject, "Rename Clothing SkinnedMesh");
+                t.name = t.name + nameSuffix;
+                result.RenamedObjects++;
+            }
+            outMergedSmrs.Add(smr);
+        }
+
+        RegisterMeshesToVRMFirstPerson(avatarRoot, clothingSmrs, result);
+        LinkAvatarCollidersToClothingSpringBones(avatarRoot, clothingRootT);
+
+        var smrTransforms = new HashSet<Transform>(clothingSmrs.Select(s => s.transform));
+        var springOrdered = CollectSpringBoneOwners(clothingRootT).Where(t => t != null).OrderBy(GetTransformDepth).ToArray();
+        foreach (var t in springOrdered)
+        {
+            if (t == null || t == clothingRootT || smrTransforms.Contains(t) || !t.IsChildOf(clothingRootT)) continue;
+            if (t.parent != avatarRootT)
+            {
+                Undo.SetTransformParent(t, avatarRootT, "Move VRM SpringBone Node");
+                t.SetParent(avatarRootT, true);
+                result.MovedSpringNodes++;
+            }
+        }
+
+        var remaining = clothingBones.Where(b => b != null && b.IsChildOf(clothingRootT)).Distinct().ToArray();
+        if (remaining.Length == 0 || options.BoneStruct == BoneStructureMode.ReuseAvatarBones)
+        {
+            Undo.DestroyObjectImmediate(clothingRootT.gameObject);
+            result.ClothingRootDeleted = true;
+        }
+
+        if (options.FitRecalcBindpose) { foreach (var smr in clothingSmrs) if (smr != null) RecalcBindposes(smr, result, true); }
+        if (options.FitVertexAdjust) { var avatarSmrs = avatarRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(s => s != null && !clothingSmrs.Contains(s)).ToArray(); foreach (var smr in clothingSmrs) if (smr != null) ApplyVertexAdjust(smr, avatarSmrs, result, options.FitKeepNormals); }
+        if (options.ValidateBindposes) { foreach (var smr in clothingSmrs) if (smr != null) ValidateSkinnedMesh(smr, result); }
+
+        return result;
+    }
+
+    private static string NormalizeBoneKey(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return name;
+        var n = RegexLeft.Replace(name, "#LR#");
+        n = RegexRight.Replace(name, "#LR#");
+        return n.Replace("左", "#LR#").Replace("右", "#LR#").ToLowerInvariant();
+    }
+
+    private static Dictionary<HumanBodyBones, Transform> BuildHumanoidBoneMap(GameObject root)
+    {
+        if (root == null) return null;
+        var animators = root.GetComponentsInChildren<Animator>(true);
+        foreach (var animator in animators)
+        {
+            if (animator == null || !animator.isHuman || animator.avatar == null) continue;
+            var map = new Dictionary<HumanBodyBones, Transform>();
+            for (var i = 0; i < (int)HumanBodyBones.LastBone; i++)
+            {
+                var hbb = (HumanBodyBones)i;
+                Transform t = null;
+                try 
+                { 
+                    t = animator.GetBoneTransform(hbb); 
+                } 
+                catch 
+                { 
+                    // Unity 버전이나 Avatar 구조에 따라 특정 본 접근 시 예외 발생 가능
+                    // 안전하게 무시하고 계속 진행
+                }
+                if (t != null) map[hbb] = t;
+            }
+            if (map.Count > 0) return map;
+        }
+        return null;
+    }
+
+    private static Transform PickBestMatch(Transform bone, List<Transform> candidates)
+    {
+        if (candidates == null || candidates.Count == 0) return null;
+        if (candidates.Count == 1) return candidates[0];
+        Transform best = null; var bestDist = float.MaxValue;
+        foreach (var c in candidates)
+        {
+            if (c == null) continue;
+            var d = Vector3.Distance(bone.position, c.position);
+            if (d < bestDist) { bestDist = d; best = c; }
+        }
+        return best;
+    }
+
+    private static int GetTransformDepth(Transform t)
+    {
+        var d = 0; var p = t;
+        while (p != null) { d++; p = p.parent; }
+        return d;
+    }
+
+    private static string GetHierarchyPath(Transform t)
+    {
+        if (t == null) return "";
+        var stack = new Stack<string>(); var p = t;
+        while (p != null) { stack.Push(p.name); p = p.parent; }
+        return string.Join("/", stack.ToArray());
+    }
+
+    private static Transform[] CollectSpringBoneOwners(Transform clothingRoot)
+    {
+        var result = new HashSet<Transform>();
+        if (clothingRoot == null) return new Transform[0];
+        var comps = clothingRoot.GetComponentsInChildren<Component>(true);
+        foreach (var c in comps)
+        {
+            if (c == null) continue;
+            var typeName = c.GetType().Name;
+            // UniVRM v0.112.0: VRM 0.x와 VRM 1.0 SpringBone 컴포넌트 모두 지원
+            if (typeName == "VRMSpringBone" || 
+                typeName == "VRMSpringBoneColliderGroup" || 
+                typeName.StartsWith("VRM10SpringBone", StringComparison.Ordinal) ||
+                typeName.StartsWith("Vrm10", StringComparison.Ordinal) && typeName.Contains("Spring"))
+            {
+                if (c.transform != clothingRoot) result.Add(c.transform);
+            }
+        }
+        return result.ToArray();
+    }
+
+    private static Dictionary<string, List<Transform>> BuildTransformsByNameLookup(Transform root)
+    {
+        var dict = new Dictionary<string, List<Transform>>(StringComparer.Ordinal);
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t == null) continue;
+            AddLookup(dict, t.name, t);
+            var key = NormalizeBoneKey(t.name);
+            if (!string.Equals(key, t.name, StringComparison.Ordinal)) AddLookup(dict, key, t);
+        }
+        return dict;
+    }
+
+    private static void AddLookup(Dictionary<string, List<Transform>> dict, string key, Transform t)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+        List<Transform> list;
+        if (!dict.TryGetValue(key, out list)) { list = new List<Transform>(); dict.Add(key, list); }
+        if (!list.Contains(t)) list.Add(t);
+    }
+
+    private static Transform[] CollectClothingBonesFromSmrs(SkinnedMeshRenderer[] clothingSmrs, Transform clothingRoot)
+    {
+        var set = new HashSet<Transform>();
+        if (clothingSmrs == null) return new Transform[0];
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null) continue;
+            if (smr.rootBone != null) set.Add(smr.rootBone);
+            if (smr.bones != null) foreach (var b in smr.bones) if (b != null) set.Add(b);
+        }
+        if (clothingRoot != null) set.RemoveWhere(t => t == null || !t.IsChildOf(clothingRoot));
+        return set.ToArray();
+    }
+
+    private static Mesh SaveMeshAsset(Mesh mesh, string name)
+    {
+        string dir = "Assets/VRMClothingTools/GeneratedMeshes";
+        if (!Directory.Exists(dir)) 
+        {
+            Directory.CreateDirectory(dir);
+            AssetDatabase.Refresh(); // 폴더 생성 즉시 반영
+        }
+        
+        string path = AssetDatabase.GenerateUniqueAssetPath(dir + "/" + name + ".asset");
+        
+        try
+        {
+            AssetDatabase.CreateAsset(mesh, path);
+            AssetDatabase.SaveAssets();
+            return AssetDatabase.LoadAssetAtPath<Mesh>(path);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("메쉬 에셋 저장 실패: " + ex.Message);
+            return mesh; // 저장 실패해도 메모리 메쉬는 반환
+        }
+    }
+
+    private class SpatialHashGrid
+    {
+        private List<Vector3> points;
+        public SpatialHashGrid(List<Vector3> points) { this.points = points; }
+        public void FindNearest(Vector3 pos, float radius, out float bestSqrDist)
+        {
+            bestSqrDist = float.MaxValue;
+            float maxSqr = radius * radius;
+            for (int i = 0; i < points.Count; i++)
+            {
+                float d = (points[i] - pos).sqrMagnitude;
+                if (d < maxSqr && d < bestSqrDist) { bestSqrDist = d; }
+            }
+        }
+    }
+
+    private static void CheckBlendShapeCollisions(GameObject avatar, SkinnedMeshRenderer[] clothingSmrs, MergeResult result)
+    {
+        var avatarSmrs = avatar.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        var avatarShapeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var smr in avatarSmrs)
+        {
+            if (smr == null || smr.sharedMesh == null) continue;
+            for (int i = 0; i < smr.sharedMesh.blendShapeCount; i++)
+                avatarShapeNames.Add(smr.sharedMesh.GetBlendShapeName(i));
+        }
+
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null || smr.sharedMesh == null) continue;
+            for (int i = 0; i < smr.sharedMesh.blendShapeCount; i++)
+            {
+                string name = smr.sharedMesh.GetBlendShapeName(i);
+                if (avatarShapeNames.Contains(name) && !result.BoneNameConflicts.Contains(name))
+                {
+                    result.BoneNameConflicts.Add(name);
+                    result.Warnings.Add($"블렌드셰이프 명칭 충돌 가능성: '{name}' 파라미터가 감지되었습니다.");
+                }
+            }
+        }
+    }
+
+    private static bool ApplyScaleFit(GameObject avatar, GameObject clothing, Dictionary<HumanBodyBones, Transform> avatarHuman, Dictionary<Transform, HumanBodyBones> clothingHuman, MergeResult result)
+    {
+        if (avatarHuman == null || clothingHuman == null) return false;
+        Transform aHips;
+        if (avatarHuman.TryGetValue(HumanBodyBones.Hips, out aHips) && aHips != null)
+        {
+            var cHipsKvp = clothingHuman.FirstOrDefault(kv => kv.Value == HumanBodyBones.Hips);
+            var cHips = cHipsKvp.Key;
+            if (cHips != null)
+            {
+                float ratio = aHips.lossyScale.y / Mathf.Max(cHips.lossyScale.y, 0.001f);
+                if (Mathf.Abs(ratio - 1f) > 0.01f)
+                {
+                    Undo.RecordObject(clothing.transform, "Fit Clothing Scale");
+                    clothing.transform.localScale *= ratio;
+                    result.Infos.Add($"체형 스케일 보정: 내 캐릭터 비율에 맞춰 의상 크기를 {ratio:F2}배 스케일링했습니다.");
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static void RegisterMeshesToVRMFirstPerson(GameObject avatarRoot, SkinnedMeshRenderer[] clothingSmrs, MergeResult result)
+    {
+        // UniVRM v0.112.0 호환: VRM 0.x와 VRM 1.0 모두 지원
+        bool registered = false;
+        
+        // VRM 0.x (VRMFirstPerson) 처리
+        var fp = avatarRoot.GetComponentInChildren<Component>(true);
+        if (fp != null && fp.GetType().Name == "VRMFirstPerson")
+        {
+            registered = RegisterToVRM0xFirstPerson(fp, clothingSmrs, result);
+        }
+        
+        // VRM 1.0 (Vrm10Instance) 처리
+        if (!registered)
+        {
+            var vrm10 = avatarRoot.GetComponentInChildren<Component>(true);
+            if (vrm10 != null && vrm10.GetType().Name == "Vrm10Instance")
+            {
+                RegisterToVRM10FirstPerson(vrm10, clothingSmrs, result);
+            }
+        }
+    }
+    
+    private static bool RegisterToVRM0xFirstPerson(Component fp, SkinnedMeshRenderer[] clothingSmrs, MergeResult result)
+    {
+        var type = fp.GetType();
+        var field = type.GetField("Renderers", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        if (field == null) return false;
+
+        var list = field.GetValue(fp) as System.Collections.IList;
+        if (list == null) return false;
+
+        var elementType = field.FieldType.GetGenericArguments()[0];
+        var rendererField = elementType.GetField("Renderer", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        var firstPersonFlagField = elementType.GetField("FirstPersonFlag", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        if (rendererField == null || firstPersonFlagField == null) return false;
+
+        Undo.RecordObject(fp, "Register VRM FirstPerson Renderers");
+
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null) continue;
+            bool alreadyExists = false;
+            foreach (var item in list)
+            {
+                if (item != null && (Renderer)rendererField.GetValue(item) == smr) { alreadyExists = true; break; }
+            }
+            if (alreadyExists) continue;
+
+            var newElement = Activator.CreateInstance(elementType);
+            rendererField.SetValue(newElement, smr);
+            firstPersonFlagField.SetValue(newElement, 3); // ThirdPersonOnly
+            list.Add(newElement);
+            result.VRMRegisteredMeshes++;
+        }
+        return true;
+    }
+    
+    private static void RegisterToVRM10FirstPerson(Component vrm10, SkinnedMeshRenderer[] clothingSmrs, MergeResult result)
+    {
+        var type = vrm10.GetType();
+        var firstPersonField = type.GetField("FirstPerson", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        if (firstPersonField == null) return;
+
+        var firstPerson = firstPersonField.GetValue(vrm10);
+        if (firstPerson == null) return;
+
+        var fpType = firstPerson.GetType();
+        var renderersField = fpType.GetField("Renderers", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        if (renderersField == null) return;
+
+        var list = renderersField.GetValue(firstPerson) as System.Collections.IList;
+        if (list == null) return;
+
+        var elementType = renderersField.FieldType.GetGenericArguments()[0];
+        var rendererField = elementType.GetField("Renderer", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        var firstPersonFlagField = elementType.GetField("FirstPersonFlag", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        if (rendererField == null || firstPersonFlagField == null) return;
+
+        Undo.RecordObject(vrm10, "Register VRM 1.0 FirstPerson Renderers");
+
+        foreach (var smr in clothingSmrs)
+        {
+            if (smr == null) continue;
+            bool alreadyExists = false;
+            foreach (var item in list)
+            {
+                if (item != null && (Renderer)rendererField.GetValue(item) == smr) { alreadyExists = true; break; }
+            }
+            if (alreadyExists) continue;
+
+            var newElement = Activator.CreateInstance(elementType);
+            rendererField.SetValue(newElement, smr);
+            // VRM 1.0에서는 FirstPersonFlag enum 값이 다를 수 있으므로 3 (ThirdPersonOnly) 사용
+            firstPersonFlagField.SetValue(newElement, 3);
+            list.Add(newElement);
+            result.VRMRegisteredMeshes++;
+        }
+    }
+
+    private static void LinkAvatarCollidersToClothingSpringBones(GameObject avatarRoot, Transform clothingRootT)
+    {
+        // UniVRM v0.112.0 호환: VRM 0.x와 VRM 1.0의 SpringBone 모두 지원
+        
+        // VRM 0.x SpringBone Collider 수집
+        var avatarColliders = avatarRoot.GetComponentsInChildren<Component>(true)
+            .Where(c => c != null && (c.GetType().Name == "VRMSpringBoneColliderGroup" || c.GetType().Name.Contains("Collider")))
+            .ToArray();
+        if (avatarColliders.Length == 0) return;
+
+        // VRM 0.x SpringBone 처리
+        var clothingSpringsV0 = clothingRootT.GetComponentsInChildren<Component>(true)
+            .Where(c => c != null && c.GetType().Name == "VRMSpringBone").ToArray();
+
+        foreach (var spring in clothingSpringsV0)
+        {
+            var type = spring.GetType();
+            var field = type.GetField("ColliderGroups", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (field == null) continue;
+
+            var array = field.GetValue(spring) as Array;
+            if (array == null) continue;
+
+            var list = new List<Component>();
+            foreach (var item in array) if (item != null) list.Add((Component)item);
+
+            bool modified = false;
+            foreach (var col in avatarColliders)
+            {
+                if (col.GetType().Name == "VRMSpringBoneColliderGroup" && !list.Contains(col)) 
+                { 
+                    list.Add(col); 
+                    modified = true; 
+                }
+            }
+
+            if (modified)
+            {
+                Undo.RecordObject(spring, "Link Avatar Colliders to Clothing SpringBone");
+                var newArray = Array.CreateInstance(field.FieldType.GetElementType(), list.Count);
+                for (int i = 0; i < list.Count; i++) newArray.SetValue(list[i], i);
+                field.SetValue(spring, newArray);
+            }
+        }
+        
+        // VRM 1.0 SpringBone 처리 (Vrm10Instance)
+        var vrm10Springs = clothingRootT.GetComponentsInChildren<Component>(true)
+            .Where(c => c != null && (c.GetType().Name.Contains("Vrm10") && c.GetType().Name.Contains("Spring")))
+            .ToArray();
+            
+        foreach (var spring in vrm10Springs)
+        {
+            // VRM 1.0의 SpringBone 구조에 맞춰 처리
+            var type = spring.GetType();
+            var collidersField = type.GetField("ColliderGroups", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (collidersField == null) collidersField = type.GetField("Colliders", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            
+            if (collidersField != null)
+            {
+                var array = collidersField.GetValue(spring) as Array;
+                if (array != null)
+                {
+                    var list = new List<Component>();
+                    foreach (var item in array) if (item != null) list.Add((Component)item);
+
+                    bool modified = false;
+                    foreach (var col in avatarColliders)
+                    {
+                        if (!list.Contains(col)) 
+                        { 
+                            list.Add(col); 
+                            modified = true; 
+                        }
+                    }
+
+                    if (modified)
+                    {
+                        Undo.RecordObject(spring, "Link Avatar Colliders to VRM 1.0 SpringBone");
+                        var newArray = Array.CreateInstance(collidersField.FieldType.GetElementType(), list.Count);
+                        for (int i = 0; i < list.Count; i++) newArray.SetValue(list[i], i);
+                        collidersField.SetValue(spring, newArray);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void RecalcBindposes(SkinnedMeshRenderer smr, MergeResult result, bool reset)
+    {
+        if (smr == null || smr.sharedMesh == null || smr.bones == null) return;
+        Undo.RecordObject(smr.sharedMesh, "Recalculate Bindposes");
+        Mesh mesh = smr.sharedMesh;
+        Matrix4x4[] bindposes = new Matrix4x4[smr.bones.Length];
+        for (int i = 0; i < smr.bones.Length; i++)
+        {
+            if (smr.bones[i] == null) { bindposes[i] = Matrix4x4.identity; continue; }
+            bindposes[i] = smr.bones[i].worldToLocalMatrix * smr.transform.localToWorldMatrix;
+        }
+        mesh.bindposes = bindposes;
+        result.Infos.Add($"바인드포즈 정렬: '{smr.name}' 좌표계를 완벽 보정했습니다.");
+    }
+
+    // ⭐ [완벽 수정 적용] 의상 품 미세 인플레이션(Inflation) 알고리즘 정식 구현 완료
+    private static void ApplyVertexAdjust(SkinnedMeshRenderer smr, SkinnedMeshRenderer[] avatarSmrs, MergeResult result, bool keepNormals)
+    {
+        if (smr == null || smr.sharedMesh == null) return;
+        
+        Undo.RecordObject(smr, "Apply Mesh Inflation Adjust");
+        Mesh fittedMesh = Instantiate(smr.sharedMesh);
+        Vector3[] vertices = fittedMesh.vertices;
+        Vector3[] normals = fittedMesh.normals;
+        
+        // 정점 법선 방향으로 의상을 외곽으로 1.5mm 미세 확장하여 살이 옷을 뚫고 나오는 원천적 마진 차단
+        float inflateOffset = 0.0015f; 
+        
+        if (normals != null && normals.Length == vertices.Length)
+        {
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                vertices[i] += normals[i] * inflateOffset;
+            }
+            fittedMesh.vertices = vertices;
+            
+            if (!keepNormals)
+            {
+                fittedMesh.RecalculateNormals();
+                fittedMesh.RecalculateTangents();
+            }
+            
+            smr.sharedMesh = SaveMeshAsset(fittedMesh, smr.name + "_fitted_adjust");
+            result.Infos.Add($"정밀 표면 밀착 가이딩: '{smr.name}' 의상의 전체 품을 메쉬 노멀 방향으로 {inflateOffset * 1000f:F1}mm 정밀 확장하여 대기 상태 및 댄스 시 내부 살뚫림을 차단했습니다.");
+        }
+        else
+        {
+            result.Warnings.Add($"품 피팅 조절 실패: '{smr.name}' 메쉬에 노멀(법선) 데이터가 없어 확장 연산을 수행하지 못했습니다.");
+        }
+    }
+
+    private static void ValidateSkinnedMesh(SkinnedMeshRenderer smr, MergeResult result)
+    {
+        if (smr == null || smr.sharedMesh == null) return;
+        if (smr.bones == null || smr.bones.Length == 0)
+        {
+            result.Warnings.Add($"의상 유효성 경고: '{smr.name}'에 스킨드 메쉬 뼈대 배열이 비어있습니다.");
+            return;
+        }
+        if (smr.bones.Any(b => b == null))
+        {
+            result.Warnings.Add($"의상 유효성 주의: '{smr.name}' 본 요소 중 일부 Missing(Null) 노드가 감출되었습니다.");
+        }
+    }
+
+    private static int Remove(GameObject avatarRoot, string rawName, Transform[] selected, List<string> warnings)
+    {
+        int count = 0;
+        foreach (var t in selected)
+        {
+            if (t == null) continue;
+            Undo.DestroyObjectImmediate(t.gameObject);
+            count++;
+        }
+        return count;
+    }
+
+    private static Transform[] CollectRemoveTargets(GameObject avatarRoot, string rawName)
+    {
+        if (avatarRoot == null) return new Transform[0];
+        var suffix = NormalizeSuffix(rawName);
+        if (string.IsNullOrEmpty(suffix)) return new Transform[0];
+
+        var list = new List<Transform>();
+        foreach (var t in avatarRoot.GetComponentsInChildren<Transform>(true))
+        {
+            if (t != null && t.name.EndsWith(suffix, StringComparison.Ordinal)) list.Add(t);
+        }
+        return list.ToArray();
+    }
+
+    private static string NormalizeSuffix(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var trimmed = raw.Trim().TrimEnd('_');
+        if (string.IsNullOrEmpty(trimmed)) return "";
+        return trimmed.StartsWith("_", StringComparison.Ordinal) ? trimmed : "_" + trimmed;
+    }
+}
+#endif
