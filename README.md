@@ -221,7 +221,15 @@ WTFPL을 안다고 생각하는 경우에도 검색할 것.
 
 https://github.com/imdelulukim/VtuberVRMTool/blob/main/VRM/VRMClothingMergerTool.cs
 
-원본 제작자께 감사드립니다.
+김망상님께 감사를 표하고
+
+🙏 원본 제작자
+
+| 원본 프로젝트 제작자 |
+|----------------------|
+| [🎥 김망상 유튜브 구독하자!!](https://www.youtube.com/@im.delulukim) |
+
+김망상 유튜브 구독 하자!!1
 
 ---
 
