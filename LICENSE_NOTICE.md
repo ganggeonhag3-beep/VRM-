@@ -155,5 +155,5 @@ WTFPL은 원래 그런 라이선스니까요.
 <br><br>
 <img src="https://www.wtfpl.net/wp-content/uploads/2012/12/logo-220x1601.png" width="120" alt="WTFPL Logo" />
 <br><br>
-<img src="https://www.wtfpl.net/wp-content/uploads/2012/12/wtfpl-badge-4.png" width="80" height="15" alt="WTFPL Badge" />
+<a href="http://www.wtfpl.net/"><img src="http://www.wtfpl.net/wp-content/uploads/2012/12/wtfpl-badge-4.png" width="80" height="15" alt="WTFPL" /></a>
 </details>
