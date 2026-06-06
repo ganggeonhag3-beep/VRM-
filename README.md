@@ -330,6 +330,7 @@ WTFPL은 원래 그런 라이선스니까요.
 > 이제 프로젝트를 사용하러 가셔도 됩니다.
 >
 > ...아;;💦💦 물론 WTFPL을 검색한 뒤에요.....
+  
 
 
 
@@ -397,8 +398,125 @@ WTFPL은 원래 그런 라이선스니까요.
 
 
 
-<a href="http://www.wtfpl.net/"><img
-       src="http://www.wtfpl.net/wp-content/uploads/2012/12/wtfpl-badge-4.png"
-       width="80" height="15" alt="WTFPL" /></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+<img src="https://www.wtfpl.net/wp-content/uploads/2012/12/logo-220x1601.png" width="220" alt="WTFPL Logo" />
+<img src="http://www.wtfpl.net/wp-content/uploads/2012/12/wtfpl-badge-4.png" width="80" height="15" alt="WTFPL" />
 
 그리고 이 프로젝트에 들어가서 위쪽 옆에 (위쪽에서 오른쪽) Star버튼 (별모양 버튼이에요. 대충 이 프로젝트 팔로우 버튼 느낌) 눌러 주시면 저는 행복합니다!!!
