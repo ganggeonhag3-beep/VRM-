@@ -13,7 +13,7 @@ DO WHAT THE FUCK YOU WANT BUT DON'T BLAME ME PUBLIC LICENSE
        TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
               (복제, 배포 및 수정에 대한 이용 약관)
 
- Copyright (C) 2026 BaboBeeP (IT me) (This copyright applies to the software/code) (앞으로 영영 안보일 닉네임이지만...... 없어질 수도)
+ Copyright (C) 2026 BaboBeep (IT me) (This copyright applies to the software/code) (앞으로 영영 안보일 닉네임이지만...... 없어질 수도)
 
   0. You just DO WHAT THE FUCK YOU WANT TO.
      (너 하고 싶은 대로 다 해.)
