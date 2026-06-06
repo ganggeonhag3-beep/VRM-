@@ -330,8 +330,6 @@ WTFPL은 원래 그런 라이선스니까요.
 > 이제 프로젝트를 사용하러 가셔도 됩니다.
 >
 > ...아;;💦💦 물론 WTFPL을 검색한 뒤에요.....
-<details>
-<summary>💦💦 아;; 물론 WTFPL을 검색한 뒤에요..... (여기 클릭해보셈)</summary>
 
 <details>
 <summary>?</summary>
