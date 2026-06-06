@@ -143,3 +143,17 @@ WTFPL은 원래 그런 라이선스니까요.
 행운을 빕니다.
 
 당신에게 말입니다.
+
+<details>
+<summary><code>[vrm-merge-tool] task completed with status: 0xWTFPL2026</code></summary>
+<br>
+🤖 <b>시스템 숨은 메시지 해제 완료.</b>
+<br>
+여기까지 찾아내다니 코드를 꽤나 뜯어보시는 분이군요? 
+<br>
+당신을 위해 라이선스 마스터가 준비한 이스터에그입니다.
+<br><br>
+<img src="https://www.wtfpl.net/wp-content/uploads/2012/12/logo-220x1601.png" width="120" alt="WTFPL Logo" />
+<br><br>
+<img src="https://www.wtfpl.net/wp-content/uploads/2012/12/wtfpl-badge-4.png" width="80" height="15" alt="WTFPL Badge" />
+</details>
