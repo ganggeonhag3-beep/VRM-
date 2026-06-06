@@ -4,7 +4,7 @@ Unity에서 VTuber용 VRM 모델에 새로운 의상 에셋을 쉽고 빠르게 
 
 ## 🛠 요구 사항 (Requirements)
 
-- Unity 2019.4.41f1에서 Unity 2023 버전
+- Unity 2019.4.41f1에서 Unity 2023 버전까지 모두 호환 (VSF에서 되게  하려면 2019.4.41f1, VRCHAT Creator Companion 환경에서 하려면 2022.3.22f1, Warudo에서 하려면 2021.3.45f2)
 - [UniVRM](https://github.com/vrm-c/UniVRM) 패키지 설치 필요
 - 포맷: `.vrm` 캐릭터 모델 및 리깅이 완료된 의상 프리팹(FBX)
 
