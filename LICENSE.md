@@ -1,7 +1,7 @@
 DO WHAT THE FUCK YOU WANT BUT DON'T BLAME ME PUBLIC LICENSE
                         Version 2.1, June 2026
 
- Copyright (C) 2026 강건학
+ Copyright (C) 2026 BaboBeep (It ME)
 
  Everyone is permitted to copy and distribute verbatim or modified
  copies of this license document, and changing it is allowed as long
