@@ -228,7 +228,7 @@ https://github.com/imdelulukim/VtuberVRMTool/blob/main/VRM/VRMClothingMergerTool
 |----------------------|
 | [🎥 김망상 유튜브 구독하자!!](https://www.youtube.com/@im.delulukim) |
 
-김망상 유튜브 구독 하자!!1
+김망상 유튜브 구독 하자!!
 
 ---
 
