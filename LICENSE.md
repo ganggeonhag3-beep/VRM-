@@ -1,7 +1,7 @@
 DO WHAT THE FUCK YOU WANT BUT DON'T BLAME ME PUBLIC LICENSE
                         Version 2.1, June 2026
 
- Copyright (C) 2026 BaboBeep (It ME)
+ Copyright (C) 2004 Sam Hocevar <sam@hocevar.net>
 
  Everyone is permitted to copy and distribute verbatim or modified
  copies of this license document, and changing it is allowed as long
@@ -12,6 +12,8 @@ DO WHAT THE FUCK YOU WANT BUT DON'T BLAME ME PUBLIC LICENSE
         DO WHAT THE FUCK YOU WANT BUT DON'T BLAME ME PUBLIC LICENSE
        TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
               (복제, 배포 및 수정에 대한 이용 약관)
+
+ Copyright (C) 2026 BaboBeeP (IT me) (This copyright applies to the software/code) (앞으로 영영 안보일 닉네임이지만...... 없어질 수도)
 
   0. You just DO WHAT THE FUCK YOU WANT TO.
      (너 하고 싶은 대로 다 해.)
